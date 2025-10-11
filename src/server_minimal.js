@@ -9,10 +9,15 @@ const config = {
   http: { port: 8000, allow_origin: "*" },
   
   // Performance settings
-  captureIntervalMs: 3000,      // 3 seconds (was 10s) - 3x faster response
-  initialDelayMs: 2000,         // 2 seconds (was 3s)
-  ffmpegQuality: 7,             // Higher quality = bigger file but better accuracy
-  maxConcurrentProcessing: 2,   // Process up to 2 frames simultaneously
+  captureIntervalMs: 3000,      // 3 seconds - fast response
+  initialDelayMs: 2000,
+  ffmpegQuality: 7,
+  
+  // Alert debouncing (prevent spam)
+  alertCooldownMs: 30000,       // 30 seconds between alerts
+  
+  // Processing control
+  maxConcurrentProcessing: 1,   // Process 1 frame at a time (prevents race conditions)
 };
 
 const nms = new NodeMediaServer({ rtmp: config.rtmp, http: config.http });
@@ -27,11 +32,18 @@ const classificationDir = path.join(__dirname, "../data/classification_results")
   }
 });
 
-// State management
+// ===== STATE MANAGEMENT =====
 let activeStreams = new Map();
 let frameCount = 0;
 let processingQueue = [];
 let currentlyProcessing = 0;
+
+// Alert tracking (server-level debouncing)
+const alertState = {
+  lastAlertTime: {},  // Track last alert time per threat level
+  totalAlerts: 0,
+  debouncedAlerts: 0,
+};
 
 // Statistics
 const stats = {
@@ -44,13 +56,37 @@ const stats = {
 };
 
 /**
- * Process queue of frames (allows parallel processing)
+ * Check if alert should be sent (server-level debouncing)
+ */
+function shouldSendAlert(threatLevel) {
+  const now = Date.now();
+  const lastAlert = alertState.lastAlertTime[threatLevel] || 0;
+  const timeSinceLastAlert = now - lastAlert;
+  
+  if (timeSinceLastAlert < config.alertCooldownMs) {
+    const remaining = Math.ceil((config.alertCooldownMs - timeSinceLastAlert) / 1000);
+    console.log(`⏭️  Alert debounced: ${threatLevel} alert sent ${Math.floor(timeSinceLastAlert/1000)}s ago (cooldown: ${remaining}s remaining)`);
+    alertState.debouncedAlerts++;
+    return false;
+  }
+  
+  // Update last alert time
+  alertState.lastAlertTime[threatLevel] = now;
+  alertState.totalAlerts++;
+  return true;
+}
+
+/**
+ * Process queue of frames (sequential processing)
  */
 function processQueue() {
-  while (processingQueue.length > 0 && currentlyProcessing < config.maxConcurrentProcessing) {
-    const imagePath = processingQueue.shift();
-    processWithPython(imagePath);
+  // Only process if we have capacity and frames waiting
+  if (currentlyProcessing >= config.maxConcurrentProcessing || processingQueue.length === 0) {
+    return;
   }
+  
+  const imagePath = processingQueue.shift();
+  processWithPython(imagePath);
 }
 
 /**
@@ -124,7 +160,7 @@ function processWithPython(imagePath) {
       }
     }
     
-    // Print Python output (but not the raw result JSON)
+    // Print Python output (but not the raw result JSON or dividers)
     if (!text.includes("PYTHON_RESULT:") && !text.includes("====")) {
       process.stdout.write(text);
     }
@@ -141,18 +177,25 @@ function processWithPython(imagePath) {
     if (code === 0 && pythonResult) {
       if (pythonResult.skipped) {
         stats.skipped++;
-        console.log(`⏭️  Frame skipped: ${pythonResult.skip_reason}`);
+        console.log(`⏭️  Frame skipped: ${pythonResult.skip_reason} (${processTime}ms)`);
       } else {
         stats.processed++;
         console.log(`✅ Processing complete in ${processTime}ms`);
         
         if (pythonResult.threat_analysis?.threat_detected) {
           stats.threats++;
-          console.log(`🚨 THREAT: ${pythonResult.threat_analysis.threat_level}`);
+          const threatLevel = pythonResult.threat_analysis.threat_level;
+          console.log(`🚨 THREAT DETECTED: ${threatLevel}`);
           
+          // SERVER-LEVEL ALERT DEBOUNCING
           if (pythonResult.alert_sent) {
-            stats.alerts++;
-            console.log(`📱 Alert sent to Telegram`);
+            // Python tried to send alert, check if we should actually send it
+            if (shouldSendAlert(threatLevel)) {
+              stats.alerts++;
+              console.log(`📱 Alert allowed - sent to Telegram`);
+            } else {
+              console.log(`📱 Alert blocked by server-level debouncing`);
+            }
           }
         }
       }
@@ -181,9 +224,10 @@ function processWithPython(imagePath) {
  */
 function printStats() {
   const runtime = (Date.now() - stats.startTime) / 1000 / 60; // minutes
-  const totalChecked = stats.captured;
   const apiCallsSaved = stats.skipped;
-  const costSaved = apiCallsSaved * 0.005; // Approx $0.005 per API call
+  const costSaved = apiCallsSaved * 0.005;
+  const alertsSent = alertState.totalAlerts;
+  const alertsBlocked = alertState.debouncedAlerts;
   
   console.log(`\n📊 ===== EFFICIENCY STATS =====`);
   console.log(`⏱️  Runtime: ${runtime.toFixed(1)} minutes`);
@@ -191,13 +235,12 @@ function printStats() {
   console.log(`✅ Processed: ${stats.processed} frames`);
   console.log(`⏭️  Skipped: ${stats.skipped} frames (${((stats.skipped/Math.max(1,stats.captured))*100).toFixed(1)}%)`);
   console.log(`🚨 Threats: ${stats.threats}`);
-  console.log(`📱 Alerts sent: ${stats.alerts}`);
-  if (stats.threats > stats.alerts) {
-    console.log(`⏭️  Alerts debounced: ${stats.threats - stats.alerts}`);
-  }
+  console.log(`📱 Alerts sent: ${alertsSent}`);
+  console.log(`⏭️  Alerts debounced: ${alertsBlocked}`);
   console.log(`💰 Cost saved: $${costSaved.toFixed(2)} (${apiCallsSaved} API calls avoided)`);
   console.log(`============================\n`);
 }
+
 /**
  * Start frame capture for a stream
  */
@@ -206,9 +249,11 @@ function startFrameCapture(streamPath) {
 
   console.log(`🎥 Starting optimized frame capture for ${streamPath}`);
   console.log(`⚡ Capture interval: ${config.captureIntervalMs}ms`);
+  console.log(`🚨 Alert cooldown: ${config.alertCooldownMs/1000}s`);
   console.log(`🎯 Motion detection: ENABLED`);
   console.log(`🔄 Deduplication: ENABLED`);
-  console.log(`📦 Image optimization: ENABLED\n`);
+  console.log(`📦 Image optimization: ENABLED`);
+  console.log(`⚙️  Sequential processing: ENABLED (prevents race conditions)\n`);
 
   // Reset stats for new stream
   stats.startTime = Date.now();
@@ -217,6 +262,9 @@ function startFrameCapture(streamPath) {
   stats.skipped = 0;
   stats.threats = 0;
   stats.alerts = 0;
+  alertState.lastAlertTime = {};
+  alertState.totalAlerts = 0;
+  alertState.debouncedAlerts = 0;
 
   // Capture first frame after delay
   setTimeout(() => captureAndProcess(streamPath), config.initialDelayMs);
@@ -257,11 +305,12 @@ nms.run();
 console.log("🚀 OPTIMIZED Hybrid RTMP Server Started!");
 console.log(`📡 RTMP Port: 1935`);
 console.log(`🌐 HTTP Port: 8000`);
-console.log(`⚡ Capture interval: ${config.captureIntervalMs}ms (${1000/config.captureIntervalMs} fps)`);
+console.log(`⚡ Capture interval: ${config.captureIntervalMs}ms`);
+console.log(`🚨 Alert cooldown: ${config.alertCooldownMs/1000}s`);
 console.log(`🐍 Python processing: ENABLED`);
-console.log(`🎯 Smart filtering: ENABLED (motion + deduplication)`);
+console.log(`🎯 Smart filtering: ENABLED`);
 console.log(`📦 Image optimization: ENABLED`);
-console.log(`🔄 Parallel processing: ${config.maxConcurrentProcessing} concurrent`);
+console.log(`⚙️  Processing mode: Sequential (1 at a time)`);
 console.log(`📁 Frames: ${captureDir}`);
 console.log(`📁 Results: ${classificationDir}\n`);
 console.log("Stream to: rtmp://localhost:1935/live/webcam");

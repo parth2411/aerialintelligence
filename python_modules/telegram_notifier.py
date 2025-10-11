@@ -16,40 +16,24 @@ class TelegramNotifier:
     
     def send_alert(self, threat_analysis, image_path=None):
         """
-        Send security alert to Telegram with debouncing
-        
-        Args:
-            threat_analysis: Threat analysis dict
-            image_path: Optional path to image file
+        Send security alert to Telegram
+        Note: Debouncing is handled by Node.js server
         """
         if not self.enabled:
             print("📱 Telegram notifications disabled")
             return False
         
         level = threat_analysis['threat_level']
-        
-        # Check if we should debounce this alert
-        if self._should_debounce(level):
-            print(f"⏭️  Alert debounced: {level} alert sent recently (cooldown: {self._alert_cooldown_seconds}s)")
-            return False
-        
         print(f"\n🚨 Sending {level} priority alert to Telegram")
         
         # Format message
         message = self._format_alert_message(threat_analysis)
         
         # Send with image if available
-        success = False
         if image_path and Path(image_path).exists():
-            success = self._send_photo(image_path, message)
+            return self._send_photo(image_path, message)
         else:
-            success = self._send_message(message)
-        
-        # Update last alert time if successful
-        if success:
-            self._update_last_alert_time(level)
-        
-        return success
+            return self._send_message(message)
     
     def _should_debounce(self, threat_level):
         """Check if alert should be debounced (too soon since last alert)"""
