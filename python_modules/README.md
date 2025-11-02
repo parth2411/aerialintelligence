@@ -380,6 +380,209 @@ CLASSIFICATION_RESULTS_DIR=./data/classification_results
 python process_frame.py path/to/test/image.jpg
 ```
 
+## Running the System
+
+The Python modules are integrated with the Node.js RTMP server. You need to run both the server and stream video to it.
+
+### Quick Start
+
+**Terminal 1** - Start the RTMP server:
+```bash
+node src/server_minimal.js
+```
+
+**Terminal 2** - Stream video from your source (see options below)
+
+### Video Source Options
+
+#### 1. Webcam Stream (macOS)
+
+Stream from your built-in webcam:
+
+```bash
+ffmpeg -f avfoundation -framerate 30 -video_size 1280x720 -i "0" \
+  -f flv -vcodec libx264 -preset ultrafast -tune zerolatency \
+  rtmp://localhost:1935/live/webcam
+```
+
+**Parameters**:
+- `-i "0"`: First camera device (use `-list_devices true -f avfoundation -i ""` to list all devices)
+- `-framerate 30`: Capture at 30 FPS
+- `-video_size 1280x720`: 720p resolution
+- Stream key: `webcam`
+
+#### 2. Webcam Stream (Linux)
+
+```bash
+ffmpeg -f v4l2 -framerate 30 -video_size 1280x720 -i /dev/video0 \
+  -f flv -vcodec libx264 -preset ultrafast -tune zerolatency \
+  rtmp://localhost:1935/live/webcam
+```
+
+#### 3. Webcam Stream (Windows)
+
+```bash
+ffmpeg -f dshow -framerate 30 -video_size 1280x720 -i video="Integrated Camera" \
+  -f flv -vcodec libx264 -preset ultrafast -tune zerolatency \
+  rtmp://localhost:1935/live/webcam
+```
+
+#### 4. Drone Stream (DJI/Generic RTSP)
+
+Stream from a drone that supports RTSP output:
+
+```bash
+ffmpeg -i rtsp://drone_ip:rtsp_port/stream \
+  -f flv -vcodec libx264 -preset ultrafast -tune zerolatency \
+  rtmp://localhost:1935/live/drone
+```
+
+**Common drone RTSP URLs**:
+- DJI Drones: `rtsp://192.168.1.1:8554/live`
+- Generic IP cameras: `rtsp://admin:password@camera_ip:554/stream1`
+
+Stream key: `drone`
+
+#### 5. IP Security Camera
+
+Stream from an IP camera with RTSP support:
+
+```bash
+ffmpeg -i rtsp://username:password@camera_ip:554/stream \
+  -f flv -vcodec libx264 -preset ultrafast -tune zerolatency \
+  rtmp://localhost:1935/live/camera1
+```
+
+Stream key: `camera1`
+
+#### 6. Video File (Testing)
+
+Stream a pre-recorded video file for testing:
+
+```bash
+ffmpeg -re -i /path/to/video.mp4 \
+  -f flv -vcodec libx264 -preset ultrafast \
+  rtmp://localhost:1935/live/test
+```
+
+**Parameters**:
+- `-re`: Read input at native frame rate (simulates real-time)
+- Stream key: `test`
+
+#### 7. OBS Studio
+
+Use OBS Studio for advanced streaming:
+
+1. Open OBS Studio
+2. Configure your scene (webcam, screen capture, etc.)
+3. Settings → Stream:
+   - Service: Custom
+   - Server: `rtmp://localhost:1935/live`
+   - Stream Key: `obs` (or any key you choose)
+4. Click "Start Streaming"
+
+#### 8. Multiple Camera Setup
+
+Run multiple camera streams simultaneously:
+
+**Terminal 2** - Camera 1:
+```bash
+ffmpeg -f avfoundation -i "0" \
+  -f flv -vcodec libx264 -preset ultrafast -tune zerolatency \
+  rtmp://localhost:1935/live/camera1
+```
+
+**Terminal 3** - Camera 2:
+```bash
+ffmpeg -f avfoundation -i "1" \
+  -f flv -vcodec libx264 -preset ultrafast -tune zerolatency \
+  rtmp://localhost:1935/live/camera2
+```
+
+### Stream Keys
+
+The stream key (last part of RTMP URL) identifies different video sources:
+- `webcam` - Built-in webcam
+- `drone` - Aerial drone footage
+- `camera1`, `camera2` - Multiple security cameras
+- `test` - Testing/demo footage
+- `obs` - OBS Studio stream
+
+### Viewing the Stream
+
+While streaming, you can view the feed:
+
+1. **VLC Media Player**:
+   - Open Network Stream: `rtmp://localhost:1935/live/webcam`
+
+2. **ffplay** (comes with ffmpeg):
+   ```bash
+   ffplay rtmp://localhost:1935/live/webcam
+   ```
+
+3. **Web Browser** (if HTML viewer is configured):
+   - Open `http://localhost:8000` in your browser
+
+### Frame Capture Settings
+
+Configure frame capture rate in your Node.js server configuration:
+
+```javascript
+// Capture a frame every N seconds
+const FRAME_CAPTURE_INTERVAL = 5; // seconds
+
+// Or capture every N frames
+const FRAME_CAPTURE_RATE = 150; // frames (5 seconds at 30fps)
+```
+
+### Production Deployment
+
+For production use with continuous monitoring:
+
+```bash
+# Start server in background with PM2
+npm install -g pm2
+pm2 start src/server_minimal.js --name "security-monitor"
+
+# Stream from IP camera (runs continuously)
+ffmpeg -i rtsp://camera_ip:554/stream \
+  -f flv -vcodec libx264 -preset ultrafast -tune zerolatency \
+  -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 \
+  rtmp://localhost:1935/live/security_cam
+```
+
+**Reconnection flags** ensure ffmpeg reconnects if the stream drops.
+
+### Troubleshooting Streams
+
+**Issue**: `Connection refused`
+- **Solution**: Ensure the RTMP server is running first
+
+**Issue**: `Device not found` (webcam)
+- **Solution**: List available devices:
+  ```bash
+  # macOS
+  ffmpeg -f avfoundation -list_devices true -i ""
+
+  # Linux
+  ls /dev/video*
+
+  # Windows
+  ffmpeg -list_devices true -f dshow -i dummy
+  ```
+
+**Issue**: High latency/lag
+- **Solution**: Use `-tune zerolatency` and `-preset ultrafast` flags
+
+**Issue**: Stream keeps dropping
+- **Solution**: Add reconnection flags (see Production Deployment above)
+
+**Issue**: Poor video quality
+- **Solution**: Increase bitrate:
+  ```bash
+  ffmpeg -i input -b:v 2M -maxrate 2M -bufsize 4M -f flv rtmp://...
+  ```
+
 ## Integration with Node.js
 
 The Python modules are called from Node.js via child process:
