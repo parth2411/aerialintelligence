@@ -57,7 +57,6 @@ telegram_enabled = Config.TELEGRAM_ENABLED
 Config.validate()
 ```
 
----
 
 ### 2. motion_detector.py
 
@@ -122,7 +121,6 @@ if not is_duplicate:
 **Parameters**:
 - `similarity_threshold`: Similarity threshold for duplicates (default: 0.95)
 
----
 
 ### 4. image_optimizer.py
 
