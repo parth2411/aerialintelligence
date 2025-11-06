@@ -89,7 +89,6 @@ if has_motion:
 - `threshold`: Pixel difference threshold (default: 25)
 - `min_change_percent`: Minimum percentage of changed pixels (default: 0.5%)
 
----
 
 ### 3. frame_deduplicator.py
 
@@ -152,7 +151,6 @@ print(f"Original: {original_size}KB → Optimized: {optimized_size}KB")
 - `max_size_kb`: Target maximum file size in KB (default: 150)
 - `quality`: JPEG quality 1-100 (default: 85)
 
----
 
 ### 5. classifier.py
 
@@ -194,7 +192,6 @@ result_file = classifier.save_result(
 - Returns detailed scene descriptions
 - Handles API errors gracefully
 
----
 
 ### 6. threat_detector.py
 
@@ -244,7 +241,6 @@ if analysis['threat_detected']:
 }
 ```
 
----
 
 ### 7. telegram_notifier.py
 
@@ -304,7 +300,6 @@ else:
 📱 This is an automated safety monitoring alert.
 ```
 
----
 
 ## Processing Pipeline
 
